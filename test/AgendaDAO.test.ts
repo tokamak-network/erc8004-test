@@ -7,6 +7,7 @@ import { SignerWithAddress } from "@nomicfoundation/hardhat-ethers/signers";
 describe("AgendaDAO", function () {
   let voteToken: VoteToken;
   let agendaDAO: AgendaDAO;
+  let identityRegistry: Awaited<ReturnType<ReturnType<typeof ethers.getContractFactory>["deploy"]>>;
   let owner: SignerWithAddress;
   let voter1: SignerWithAddress;
   let voter2: SignerWithAddress;
@@ -21,10 +22,16 @@ describe("AgendaDAO", function () {
     const VoteTokenFactory = await ethers.getContractFactory("VoteToken");
     voteToken = await VoteTokenFactory.deploy("VoteToken", "VOTE", INITIAL_SUPPLY);
 
+    const MockRegistryFactory = await ethers.getContractFactory("MockIdentityRegistry");
+    identityRegistry = await MockRegistryFactory.deploy();
+    await identityRegistry.register(owner.address);
+    await identityRegistry.register(voter1.address);
+    await identityRegistry.register(voter2.address);
+
     const AgendaDAOFactory = await ethers.getContractFactory("AgendaDAO");
     agendaDAO = await AgendaDAOFactory.deploy(
       await voteToken.getAddress(),
-      mockRegistry.address
+      await identityRegistry.getAddress()
     );
 
     await voteToken.transfer(voter1.address, ethers.parseEther("100000"));
@@ -44,6 +51,14 @@ describe("AgendaDAO", function () {
       const proposal = await agendaDAO.getProposal(0);
       expect(proposal.proposer).to.equal(owner.address);
       expect(proposal.description).to.equal("Test Proposal");
+    });
+
+    it("should prevent propose without registered identity (ERC-8004)", async function () {
+      const [, , , , unregistered] = await ethers.getSigners();
+      const callData = ethers.hexlify(ethers.toUtf8Bytes("test"));
+      await expect(
+        agendaDAO.connect(unregistered).propose("Test", callData, mockRegistry.address)
+      ).to.be.revertedWithCustomError(agendaDAO, "NotRegisteredIdentity");
     });
   });
 
@@ -80,10 +95,18 @@ describe("AgendaDAO", function () {
 
     it("should prevent voting without tokens", async function () {
       const [, , , , noTokens] = await ethers.getSigners();
-      
+      await identityRegistry.register(noTokens.address);
       await expect(
         agendaDAO.connect(noTokens).vote(0, true)
       ).to.be.revertedWithCustomError(agendaDAO, "NoVotingPower");
+    });
+
+    it("should prevent vote without registered identity (ERC-8004)", async function () {
+      const [, , , , unregistered] = await ethers.getSigners();
+      await voteToken.transfer(unregistered.address, ethers.parseEther("1000"));
+      await expect(
+        agendaDAO.connect(unregistered).vote(0, true)
+      ).to.be.revertedWithCustomError(agendaDAO, "NotRegisteredIdentity");
     });
   });
 

@@ -3,9 +3,14 @@ pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
+/// @notice ERC-8004 Identity Registry: "owner" has at least one registered identity (agent) if balanceOf(owner) > 0
+interface IIdentityRegistry {
+    function balanceOf(address owner) external view returns (uint256);
+}
+
 contract AgendaDAO {
     IERC20 public immutable voteToken;
-    address public immutable identityRegistry;
+    IIdentityRegistry public immutable identityRegistry;
     
     uint256 public constant VOTING_PERIOD = 5 minutes;
     
@@ -52,10 +57,11 @@ contract AgendaDAO {
     error AlreadyExecuted();
     error NotPassed();
     error NoVotingPower();
-    
+    error NotRegisteredIdentity();
+
     constructor(address _voteToken, address _identityRegistry) {
         voteToken = IERC20(_voteToken);
-        identityRegistry = _identityRegistry;
+        identityRegistry = IIdentityRegistry(_identityRegistry);
     }
     
     function propose(
@@ -63,6 +69,9 @@ contract AgendaDAO {
         bytes calldata callData,
         address target
     ) external returns (uint256) {
+        if (identityRegistry.balanceOf(msg.sender) == 0) {
+            revert NotRegisteredIdentity();
+        }
         uint256 id = proposalCount++;
         uint256 startTime = block.timestamp;
         uint256 endTime = startTime + VOTING_PERIOD;
@@ -95,15 +104,15 @@ contract AgendaDAO {
     
     function vote(uint256 proposalId, bool support) external {
         Proposal storage proposal = proposals[proposalId];
-        
+
         if (block.timestamp >= proposal.endTime) {
             revert VotingEnded();
         }
-        
+
         if (hasVoted[proposalId][msg.sender]) {
             revert AlreadyVoted();
         }
-        
+
         uint256 votes = voteToken.balanceOf(msg.sender);
         if (votes == 0) {
             revert NoVotingPower();
